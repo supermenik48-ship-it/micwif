@@ -178,7 +178,9 @@ public struct ScannerView: View {
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.success)
             dismiss()
-            onScanSuccess(result.ip, result.port, result.token)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                onScanSuccess(result.ip, result.port, result.token)
+            }
         } else {
             scanErrorMessage = "Неверный формат QR-кода"
         }
@@ -293,18 +295,13 @@ private struct QRCameraScannerContainer: UIViewControllerRepresentable {
 
     class Coordinator: NSObject, QRCameraViewControllerDelegate {
         var onDetectedCode: (String) -> Void
-        private var hasScanned = false
 
         init(onDetectedCode: @escaping (String) -> Void) {
             self.onDetectedCode = onDetectedCode
         }
 
         func didFindCode(_ code: String) {
-            guard !hasScanned else { return }
-            hasScanned = true
-            DispatchQueue.main.async {
-                self.onDetectedCode(code)
-            }
+            self.onDetectedCode(code)
         }
     }
 }
@@ -320,6 +317,7 @@ private class QRCameraViewController: UIViewController, AVCaptureMetadataOutputO
     private let captureSession = AVCaptureSession()
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private let sessionQueue = DispatchQueue(label: "com.wifimic.camera.queue")
+    private var hasScanned: Bool = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -374,7 +372,8 @@ private class QRCameraViewController: UIViewController, AVCaptureMetadataOutputO
             let metadataOutput = AVCaptureMetadataOutput()
             if captureSession.canAddOutput(metadataOutput) {
                 captureSession.addOutput(metadataOutput)
-                metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
+                // Use sessionQueue instead of DispatchQueue.main to prevent UI lockup
+                metadataOutput.setMetadataObjectsDelegate(self, queue: sessionQueue)
                 if metadataOutput.availableMetadataObjectTypes.contains(.qr) {
                     metadataOutput.metadataObjectTypes = [.qr]
                 }
@@ -417,13 +416,23 @@ private class QRCameraViewController: UIViewController, AVCaptureMetadataOutputO
 
     // MARK: - AVCaptureMetadataOutputObjectsDelegate
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard !hasScanned else { return }
         guard let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               metadataObject.type == .qr,
-              let stringValue = metadataObject.stringValue else {
+              let stringValue = metadataObject.stringValue,
+              !stringValue.isEmpty else {
             return
         }
 
-        captureSession.stopRunning()
-        delegate?.didFindCode(stringValue)
+        hasScanned = true
+
+        // Stop session safely in background sessionQueue (NEVER block main thread)
+        if captureSession.isRunning {
+            captureSession.stopRunning()
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.delegate?.didFindCode(stringValue)
+        }
     }
 }

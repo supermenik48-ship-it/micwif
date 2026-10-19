@@ -223,7 +223,6 @@ public final class ConnectionManager: ObservableObject {
 
         let endpoint = NWEndpoint.Host(host)
         let tcpParams = NWParameters.tcp
-        tcpParams.allowLocalEndpointReuse = true
 
         let connection = NWConnection(host: endpoint, port: nwPort, using: tcpParams)
         self.tcpConnection = connection
@@ -431,7 +430,11 @@ public final class ConnectionManager: ObservableObject {
         updateState(.streaming)
         DispatchQueue.main.async {
             self.isStreaming = true
-            try? self.audioStreamer?.start()
+            do {
+                try self.audioStreamer?.start()
+            } catch {
+                print("[ConnectionManager] Failed to start audio streamer: \(error)")
+            }
         }
         print("[TCP] Handshake successful! Server: \(sName), UDP port: \(udpPort), auto-started streaming")
     }
@@ -471,7 +474,6 @@ public final class ConnectionManager: ObservableObject {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
         let endpoint = NWEndpoint.Host(host)
         let udpParams = NWParameters.udp
-        udpParams.allowLocalEndpointReuse = true
 
         let udp = NWConnection(host: endpoint, port: nwPort, using: udpParams)
         self.udpConnection = udp
