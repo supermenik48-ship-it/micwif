@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import UIKit
 
 public struct ScannerView: View {
     @Environment(\.dismiss) private var dismiss

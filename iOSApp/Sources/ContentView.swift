@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import UIKit
 
 public struct ContentView: View {
     @StateObject private var connectionManager = ConnectionManager()

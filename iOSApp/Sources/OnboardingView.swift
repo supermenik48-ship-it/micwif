@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 public struct OnboardingView: View {
     public var onComplete: () -> Void
