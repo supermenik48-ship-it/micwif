@@ -8,6 +8,7 @@ workflows:
     scripts:
       - name: Generate Xcode Project
         script: |
+          set -e
           brew install xcodegen
           if [ -d "iOSApp" ]; then
             cd iOSApp
@@ -15,6 +16,7 @@ workflows:
           xcodegen generate
       - name: Build and Package IPA
         script: |
+          set -e
           if [ -d "iOSApp" ]; then
             cd iOSApp
           fi

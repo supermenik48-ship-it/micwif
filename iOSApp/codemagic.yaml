@@ -1,0 +1,36 @@
+workflows:
+  build-unsigned-ipa:
+    name: Build Unsigned IPA for Sideload
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+    scripts:
+      - name: Generate Xcode Project
+        script: |
+          set -e
+          brew install xcodegen
+          if [ -d "iOSApp" ]; then
+            cd iOSApp
+          fi
+          xcodegen generate
+      - name: Build and Package IPA
+        script: |
+          set -e
+          if [ -d "iOSApp" ]; then
+            cd iOSApp
+          fi
+          xcodebuild build \
+            -project WifiMic.xcodeproj \
+            -scheme WifiMic \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+          mkdir -p build/Payload
+          cp -r build/Build/Products/Release-iphoneos/WifiMic.app build/Payload/
+          cd build && zip -qr WifiMic.ipa Payload
+    artifacts:
+      - "**/build/WifiMic.ipa"
