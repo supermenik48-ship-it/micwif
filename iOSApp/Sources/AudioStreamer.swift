@@ -32,43 +32,34 @@ public final class AudioStreamer: ObservableObject {
 
     // MARK: - Permissions Helper
     public func requestMicrophonePermission(completion: @escaping (Bool) -> Void) {
-        if #available(iOS 17.0, *) {
-            AVAudioApplication.requestRecordPermission { granted in
+        let session = AVAudioSession.sharedInstance()
+        switch session.recordPermission {
+        case .granted:
+            DispatchQueue.main.async {
+                self.permissionDenied = false
+                completion(true)
+            }
+        case .denied:
+            DispatchQueue.main.async {
+                self.permissionDenied = true
+                completion(false)
+            }
+        case .undetermined:
+            session.requestRecordPermission { granted in
                 DispatchQueue.main.async {
                     self.permissionDenied = !granted
                     completion(granted)
                 }
             }
-        } else {
-            let session = AVAudioSession.sharedInstance()
-            switch session.recordPermission {
-            case .granted:
-                self.permissionDenied = false
-                completion(true)
-            case .denied:
-                DispatchQueue.main.async {
-                    self.permissionDenied = true
-                    completion(false)
-                }
-            case .undetermined:
-                session.requestRecordPermission { granted in
-                    DispatchQueue.main.async {
-                        self.permissionDenied = !granted
-                        completion(granted)
-                    }
-                }
-            @unknown default:
+        @unknown default:
+            DispatchQueue.main.async {
                 completion(false)
             }
         }
     }
 
     public var isMicrophoneAuthorized: Bool {
-        if #available(iOS 17.0, *) {
-            return AVAudioApplication.shared.recordPermission == .granted
-        } else {
-            return AVAudioSession.sharedInstance().recordPermission == .granted
-        }
+        return AVAudioSession.sharedInstance().recordPermission == .granted
     }
 
     // MARK: - Public Controls

@@ -92,7 +92,9 @@ public struct ContentView: View {
             .onAppear {
                 setupBinding()
                 refreshLastConnection()
-                audioStreamer.requestMicrophonePermission { _ in }
+                if AVAudioSession.sharedInstance().recordPermission == .denied {
+                    audioStreamer.permissionDenied = true
+                }
             }
             .onChange(of: connectionManager.connectionState) { _ in
                 refreshLastConnection()
@@ -194,7 +196,13 @@ public struct ContentView: View {
                 }
 
                 Button {
-                    showingScanner = true
+                    if AVAudioSession.sharedInstance().recordPermission == .undetermined {
+                        audioStreamer.requestMicrophonePermission { _ in
+                            showingScanner = true
+                        }
+                    } else {
+                        showingScanner = true
+                    }
                 } label: {
                     HStack {
                         Image(systemName: "camera.fill")
@@ -214,7 +222,13 @@ public struct ContentView: View {
 
             // Secondary: Manual Entry
             Button {
-                showingManualEntry = true
+                if AVAudioSession.sharedInstance().recordPermission == .undetermined {
+                    audioStreamer.requestMicrophonePermission { _ in
+                        showingManualEntry = true
+                    }
+                } else {
+                    showingManualEntry = true
+                }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "keyboard")
