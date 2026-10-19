@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 public struct ContentView: View {
     @StateObject private var connectionManager = ConnectionManager()
@@ -92,7 +93,7 @@ public struct ContentView: View {
             .onAppear {
                 setupBinding()
                 refreshLastConnection()
-                if AVAudioSession.sharedInstance().recordPermission == .denied {
+                if audioStreamer.isMicrophoneDenied {
                     audioStreamer.permissionDenied = true
                 }
             }
@@ -196,7 +197,7 @@ public struct ContentView: View {
                 }
 
                 Button {
-                    if AVAudioSession.sharedInstance().recordPermission == .undetermined {
+                    if audioStreamer.isMicrophoneUndetermined {
                         audioStreamer.requestMicrophonePermission { _ in
                             showingScanner = true
                         }
@@ -222,7 +223,7 @@ public struct ContentView: View {
 
             // Secondary: Manual Entry
             Button {
-                if AVAudioSession.sharedInstance().recordPermission == .undetermined {
+                if audioStreamer.isMicrophoneUndetermined {
                     audioStreamer.requestMicrophonePermission { _ in
                         showingManualEntry = true
                     }
@@ -275,7 +276,13 @@ public struct ContentView: View {
                     }
 
                     Button {
-                        connectToServer(host: last.host, port: last.port, token: last.token)
+                        if audioStreamer.isMicrophoneUndetermined {
+                            audioStreamer.requestMicrophonePermission { _ in
+                                connectToServer(host: last.host, port: last.port, token: last.token)
+                            }
+                        } else {
+                            connectToServer(host: last.host, port: last.port, token: last.token)
+                        }
                     } label: {
                         HStack {
                             Image(systemName: "arrow.clockwise")

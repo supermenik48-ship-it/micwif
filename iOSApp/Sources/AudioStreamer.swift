@@ -62,6 +62,14 @@ public final class AudioStreamer: ObservableObject {
         return AVAudioSession.sharedInstance().recordPermission == .granted
     }
 
+    public var isMicrophoneDenied: Bool {
+        return AVAudioSession.sharedInstance().recordPermission == .denied
+    }
+
+    public var isMicrophoneUndetermined: Bool {
+        return AVAudioSession.sharedInstance().recordPermission == .undetermined
+    }
+
     // MARK: - Public Controls
     public func start() throws {
         audioQueue.sync {
@@ -100,8 +108,8 @@ public final class AudioStreamer: ObservableObject {
     // MARK: - Internal Engine Management
     private func startInternal() throws {
         let session = AVAudioSession.sharedInstance()
-        // playAndRecord with allowBluetooth and defaultToSpeaker for background execution when locked
-        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
+        // playAndRecord with allowBluetoothHFP and defaultToSpeaker for background execution when locked
+        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP, .defaultToSpeaker])
         try session.setPreferredSampleRate(48000.0)
         try session.setPreferredIOBufferDuration(0.01) // 10ms preferred buffer
         try session.setActive(true, options: .notifyOthersOnDeactivation)
