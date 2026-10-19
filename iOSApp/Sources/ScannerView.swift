@@ -355,36 +355,46 @@ private class QRCameraViewController: UIViewController, AVCaptureMetadataOutputO
     }
 
     private func setupCaptureSession() {
-        captureSession.beginConfiguration()
-
-        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-              let videoInput = try? AVCaptureDeviceInput(device: videoDevice),
-              captureSession.canAddInput(videoInput) else {
-            captureSession.commitConfiguration()
+        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+            print("[Camera] No wide angle camera available")
             return
         }
 
-        captureSession.addInput(videoInput)
+        do {
+            let videoInput = try AVCaptureDeviceInput(device: videoDevice)
+            captureSession.beginConfiguration()
 
-        let metadataOutput = AVCaptureMetadataOutput()
-        if captureSession.canAddOutput(metadataOutput) {
-            captureSession.addOutput(metadataOutput)
-            metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
-            metadataOutput.metadataObjectTypes = [.qr]
+            if captureSession.canAddInput(videoInput) {
+                captureSession.addInput(videoInput)
+            } else {
+                captureSession.commitConfiguration()
+                return
+            }
+
+            let metadataOutput = AVCaptureMetadataOutput()
+            if captureSession.canAddOutput(metadataOutput) {
+                captureSession.addOutput(metadataOutput)
+                metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
+                metadataOutput.metadataObjectTypes = [.qr]
+            }
+
+            captureSession.commitConfiguration()
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                let preview = AVCaptureVideoPreviewLayer(session: self.captureSession)
+                preview.videoGravity = .resizeAspectFill
+                preview.frame = self.view.bounds
+                self.view.layer.addSublayer(preview)
+                self.previewLayer = preview
+            }
+
+            sessionQueue.async { [weak self] in
+                self?.captureSession.startRunning()
+            }
+        } catch {
+            print("[Camera] Failed to initialize camera input: \(error)")
         }
-
-        captureSession.commitConfiguration()
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            let preview = AVCaptureVideoPreviewLayer(session: self.captureSession)
-            preview.videoGravity = .resizeAspectFill
-            preview.frame = self.view.bounds
-            self.view.layer.addSublayer(preview)
-            self.previewLayer = preview
-        }
-
-        captureSession.startRunning()
     }
 
     func setTorch(on: Bool) {
