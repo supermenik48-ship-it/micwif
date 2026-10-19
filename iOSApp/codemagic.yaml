@@ -33,4 +33,6 @@ workflows:
           cp -r build/Build/Products/Release-iphoneos/WifiMic.app build/Payload/
           cd build && zip -qr WifiMic.ipa Payload
     artifacts:
-      - "**/build/WifiMic.ipa"
+      - "**/WifiMic.ipa"
+      - "**/build/*.ipa"
+      - "*.ipa"

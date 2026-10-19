@@ -8,7 +8,7 @@ public final class AudioStreamer: ObservableObject {
     @Published public var audioLevel: Float = 0.0
     @Published public var gain: Float = 1.0 // 0.5 to 4.0
     @Published public private(set) var isRunning: Bool = false
-    @Published public private(set) var permissionDenied: Bool = false
+    @Published public var permissionDenied: Bool = false
 
     // MARK: - Weak ConnectionManager
     public weak var connectionManager: ConnectionManager?
@@ -23,6 +23,7 @@ public final class AudioStreamer: ObservableObject {
 
     public init() {
         setupNotifications()
+        checkPermission()
     }
 
     deinit {
@@ -70,6 +71,13 @@ public final class AudioStreamer: ObservableObject {
         return AVAudioSession.sharedInstance().recordPermission == .undetermined
     }
 
+    public func checkPermission() {
+        let session = AVAudioSession.sharedInstance()
+        DispatchQueue.main.async {
+            self.permissionDenied = (session.recordPermission == .denied)
+        }
+    }
+
     // MARK: - Public Controls
     public func start() throws {
         audioQueue.sync {
@@ -108,8 +116,8 @@ public final class AudioStreamer: ObservableObject {
     // MARK: - Internal Engine Management
     private func startInternal() throws {
         let session = AVAudioSession.sharedInstance()
-        // playAndRecord with allowBluetoothHFP and defaultToSpeaker for background execution when locked
-        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP, .defaultToSpeaker])
+        // playAndRecord with allowBluetooth and defaultToSpeaker for background execution when locked
+        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
         try session.setPreferredSampleRate(48000.0)
         try session.setPreferredIOBufferDuration(0.01) // 10ms preferred buffer
         try session.setActive(true, options: .notifyOthersOnDeactivation)

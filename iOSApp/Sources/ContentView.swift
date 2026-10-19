@@ -94,9 +94,7 @@ public struct ContentView: View {
             .onAppear {
                 setupBinding()
                 refreshLastConnection()
-                if audioStreamer.isMicrophoneDenied {
-                    audioStreamer.permissionDenied = true
-                }
+                audioStreamer.checkPermission()
             }
             .onChange(of: connectionManager.connectionState) { _ in
                 refreshLastConnection()
