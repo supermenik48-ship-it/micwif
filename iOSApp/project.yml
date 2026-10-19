@@ -14,6 +14,10 @@ targets:
           - "WifiMic.entitlements"
     info:
       path: Sources/Info.plist
+      properties:
+        NSCameraUsageDescription: "Wi-Fi Mic использует камеру для сканирования QR-кода с экрана компьютера."
+        NSMicrophoneUsageDescription: "Wi-Fi Mic использует микрофон для передачи звука на компьютер по локальной сети."
+        NSLocalNetworkUsageDescription: "Wi-Fi Mic подключается к компьютеру в локальной сети для передачи аудио."
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.local.wifimic
       ENABLE_BITCODE: NO
@@ -21,5 +25,8 @@ targets:
       INFOPLIST_FILE: Sources/Info.plist
       GENERATE_INFOPLIST_FILE: NO
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      INFOPLIST_KEY_NSCameraUsageDescription: "Wi-Fi Mic использует камеру для сканирования QR-кода с экрана компьютера."
+      INFOPLIST_KEY_NSMicrophoneUsageDescription: "Wi-Fi Mic использует микрофон для передачи звука на компьютер по локальной сети."
+      INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Wi-Fi Mic подключается к компьютеру в локальной сети для передачи аудио."
     entitlements:
       path: Sources/WifiMic.entitlements

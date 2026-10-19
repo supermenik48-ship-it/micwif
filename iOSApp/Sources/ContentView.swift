@@ -95,6 +95,9 @@ public struct ContentView: View {
                 setupBinding()
                 refreshLastConnection()
                 audioStreamer.checkPermission()
+                if audioStreamer.isMicrophoneUndetermined {
+                    audioStreamer.requestMicrophonePermission { _ in }
+                }
             }
             .onChange(of: connectionManager.connectionState) { _ in
                 refreshLastConnection()
@@ -196,13 +199,7 @@ public struct ContentView: View {
                 }
 
                 Button {
-                    if audioStreamer.isMicrophoneUndetermined {
-                        audioStreamer.requestMicrophonePermission { _ in
-                            showingScanner = true
-                        }
-                    } else {
-                        showingScanner = true
-                    }
+                    showingScanner = true
                 } label: {
                     HStack {
                         Image(systemName: "camera.fill")
@@ -222,13 +219,7 @@ public struct ContentView: View {
 
             // Secondary: Manual Entry
             Button {
-                if audioStreamer.isMicrophoneUndetermined {
-                    audioStreamer.requestMicrophonePermission { _ in
-                        showingManualEntry = true
-                    }
-                } else {
-                    showingManualEntry = true
-                }
+                showingManualEntry = true
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "keyboard")
@@ -275,13 +266,7 @@ public struct ContentView: View {
                     }
 
                     Button {
-                        if audioStreamer.isMicrophoneUndetermined {
-                            audioStreamer.requestMicrophonePermission { _ in
-                                connectToServer(host: last.host, port: last.port, token: last.token)
-                            }
-                        } else {
-                            connectToServer(host: last.host, port: last.port, token: last.token)
-                        }
+                        connectToServer(host: last.host, port: last.port, token: last.token)
                     } label: {
                         HStack {
                             Image(systemName: "arrow.clockwise")
