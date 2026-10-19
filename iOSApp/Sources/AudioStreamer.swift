@@ -116,8 +116,8 @@ public final class AudioStreamer: ObservableObject {
     // MARK: - Internal Engine Management
     private func startInternal() throws {
         let session = AVAudioSession.sharedInstance()
-        // playAndRecord with allowBluetooth and defaultToSpeaker for background execution when locked
-        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
+        // playAndRecord with allowBluetoothHFP and defaultToSpeaker for background execution when locked
+        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP, .defaultToSpeaker])
         try session.setPreferredSampleRate(48000.0)
         try session.setPreferredIOBufferDuration(0.01) // 10ms preferred buffer
         try session.setActive(true, options: .notifyOthersOnDeactivation)

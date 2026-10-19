@@ -178,8 +178,13 @@ public final class ConnectionManager: ObservableObject {
     public func sendAudio(data: Data) {
         networkQueue.async { [weak self] in
             guard let self = self else { return }
-            guard self.internalStreaming, let udp = self.udpConnection,
-                  udp.state != .cancelled, udp.state != .failed else { return }
+            guard self.internalStreaming, let udp = self.udpConnection else { return }
+            switch udp.state {
+            case .ready, .preparing:
+                break
+            default:
+                return
+            }
 
             // 26-byte Protocol v2 header:
             // [0-1]   Magic: 0x57 0x4D
