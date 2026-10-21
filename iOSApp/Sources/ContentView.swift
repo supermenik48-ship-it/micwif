@@ -1,6 +1,4 @@
 import SwiftUI
-import AVFoundation
-import UIKit
 
 public struct ContentView: View {
     @StateObject private var connectionManager = ConnectionManager()
@@ -32,10 +30,6 @@ public struct ContentView: View {
                     // Main Content
                     ScrollView {
                         VStack(spacing: 20) {
-                            if audioStreamer.permissionDenied {
-                                micPermissionDeniedCard
-                            }
-
                             switch connectionManager.connectionState {
                             case .disconnected:
                                 disconnectedSection
@@ -94,10 +88,6 @@ public struct ContentView: View {
             .onAppear {
                 setupBinding()
                 refreshLastConnection()
-                audioStreamer.checkPermission()
-                if audioStreamer.isMicrophoneUndetermined {
-                    audioStreamer.requestMicrophonePermission { _ in }
-                }
             }
             .onChange(of: connectionManager.connectionState) { _ in
                 refreshLastConnection()
@@ -289,10 +279,10 @@ public struct ContentView: View {
 
     // MARK: - Connecting / Reconnecting View
     private func connectingSection(title: String) -> some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             ProgressView()
-                .scaleEffect(1.5)
-                .padding(.top, 32)
+                .scaleEffect(1.4)
+                .padding(.top, 24)
 
             VStack(spacing: 6) {
                 Text(title)
@@ -305,11 +295,32 @@ public struct ContentView: View {
                     .padding(.horizontal, 24)
             }
 
-            Button("Отмена") {
-                connectionManager.disconnect()
+            VStack(spacing: 10) {
+                Button {
+                    connectionManager.disconnect()
+                    showingScanner = true
+                } label: {
+                    HStack {
+                        Image(systemName: "qrcode.viewfinder")
+                        Text("Сканировать новый QR-код")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.blue)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                Button("Отмена") {
+                    connectionManager.disconnect()
+                }
+                .font(.subheadline)
+                .foregroundColor(.red)
+                .padding(.vertical, 6)
             }
-            .foregroundColor(.red)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity)
         .padding(20)
@@ -473,41 +484,6 @@ public struct ContentView: View {
         .padding(24)
         .background(Color(uiColor: .secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-
-    // MARK: - Mic Permission Denied Card
-    private var micPermissionDeniedCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "mic.slash.fill")
-                    .foregroundColor(.red)
-                Text("Нет доступа к микрофону")
-                    .font(.subheadline.bold())
-                    .foregroundColor(.red)
-            }
-
-            Text("Wi-Fi Mic требуется доступ к микрофону для передачи звука. Перейдите в Настройки iOS и включите тумблер.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            Button {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            } label: {
-                Text("Открыть Настройки iOS")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.white)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 16)
-                    .background(Color.red)
-                    .clipShape(Capsule())
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color.red.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

@@ -276,6 +276,7 @@ public partial class MainWindow : Window
             if (_tcpServer != null)
             {
                 _tcpServer.DisconnectClient();
+                System.Threading.Thread.Sleep(50);
                 _tcpServer.Stop();
                 _tcpServer.Dispose();
                 _tcpServer = null;

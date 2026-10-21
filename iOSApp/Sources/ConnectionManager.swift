@@ -117,6 +117,17 @@ public final class ConnectionManager: ObservableObject {
     public func connect(host: String, port: UInt16, token: UUID) {
         networkQueue.async { [weak self] in
             guard let self = self else { return }
+            // 1. Cancel previous pending reconnects and keepalives
+            self.cancelReconnect()
+            self.stopKeepalive()
+            self.endBackgroundTask()
+            self.internalStreaming = false
+
+            // 2. Stop audio capture and close lingering sockets
+            self.stopAudioStream()
+            self.teardownUdp()
+            self.teardownTcp()
+
             self.isIntentionalDisconnect = false
             self.reconnectAttempt = 0
             self.currentHost = host
@@ -492,9 +503,20 @@ public final class ConnectionManager: ObservableObject {
     }
 
     private func handleServerBye() {
-        print("[TCP] Server sent bye")
+        print("[TCP] Server sent bye (server was stopped)")
         isIntentionalDisconnect = true
-        disconnect()
+        cancelReconnect()
+        stopKeepalive()
+        endBackgroundTask()
+        internalStreaming = false
+        stopAudioStream()
+        teardownUdp()
+        teardownTcp()
+        updateState(.disconnected)
+        DispatchQueue.main.async {
+            self.isStreaming = false
+            self.latencyMs = 0
+        }
     }
 
     // MARK: - UDP Audio Channel Setup
@@ -558,6 +580,7 @@ public final class ConnectionManager: ObservableObject {
         stopKeepalive()
         teardownTcp()
         teardownUdp()
+        stopAudioStream()
 
         guard !isIntentionalDisconnect else {
             updateState(.disconnected)

@@ -279,6 +279,8 @@ public sealed class TcpControlServer : IDisposable
         {
             using var timeoutCts = new CancellationTokenSource(500);
             SendMessageAsync(stream, sendLock, new { type = "bye" }, timeoutCts.Token).GetAwaiter().GetResult();
+            // Allow TCP stack to flush 'bye' packet across the network before disposing socket
+            Thread.Sleep(150);
         }
         catch { }
 

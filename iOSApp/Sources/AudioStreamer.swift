@@ -120,18 +120,15 @@ public final class AudioStreamer: ObservableObject {
 
     // MARK: - Internal Engine Management
     private func startInternal() throws {
-        // If already capturing and engine is actively running, no need to duplicate
-        if isRunning && audioEngine.isRunning && hasTapInstalled {
-            return
-        }
-
         stopInternal()
 
         let session = AVAudioSession.sharedInstance()
-        // playAndRecord + defaultToSpeaker + allowBluetooth + mixWithOthers for uninterrupted lock screen & background execution
+        // playAndRecord + voiceChat + defaultToSpeaker + allowBluetooth + mixWithOthers
+        // mode: .voiceChat explicitly tells iOS this is an active VoIP/mic communication app,
+        // keeping the microphone indicator ON and preventing background suspension!
         try session.setCategory(
             .playAndRecord,
-            mode: .default,
+            mode: .voiceChat,
             options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
         )
         try session.setPreferredSampleRate(48000.0)
@@ -143,17 +140,21 @@ public final class AudioStreamer: ObservableObject {
         let sampleRate = busFormat.sampleRate > 0 ? busFormat.sampleRate : 48000.0
         let bufferSize = AVAudioFrameCount(max(512, Int(sampleRate * 0.02)))
 
+        // Always remove any previous tap on bus 0 before installing to prevent NSInvalidArgumentException
+        inputNode.removeTap(onBus: 0)
+
         // Pass format: nil so CoreAudio never throws NSInvalidArgumentException
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
             self?.processIncomingBuffer(buffer)
         }
         hasTapInstalled = true
 
-        // Attach silent player node to keep the iOS audio graph active in background / lock screen
-        if !isPlayerAttached {
+        // Safely attach silent player node to keep the iOS audio graph active in background / lock screen
+        if playerNode.engine == nil {
             audioEngine.attach(playerNode)
-            isPlayerAttached = true
         }
+        isPlayerAttached = true
+
         let mixer = audioEngine.mainMixerNode
         audioEngine.connect(playerNode, to: mixer, format: nil)
         mixer.outputVolume = 0.0 // Muted so no sound comes out of the device speaker
@@ -175,14 +176,17 @@ public final class AudioStreamer: ObservableObject {
 
     private func stopInternal() {
         playerNode.stop()
-        if hasTapInstalled {
-            audioEngine.inputNode.removeTap(onBus: 0)
-            hasTapInstalled = false
-        }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        hasTapInstalled = false
+
         if audioEngine.isRunning {
             audioEngine.stop()
         }
         audioEngine.reset()
+
+        if playerNode.engine != nil {
+            audioEngine.detach(playerNode)
+        }
         isPlayerAttached = false
         silentBuffer = nil
 
@@ -208,7 +212,7 @@ public final class AudioStreamer: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
             .playAndRecord,
-            mode: .default,
+            mode: .voiceChat,
             options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
         )
         try session.setActive(true, options: .notifyOthersOnDeactivation)
