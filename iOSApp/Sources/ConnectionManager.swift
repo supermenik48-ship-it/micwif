@@ -67,6 +67,21 @@ public final class ConnectionManager: ObservableObject {
     private var isIntentionalDisconnect: Bool = false
     private var internalStreaming: Bool = false
     private let maxReconnectAttempts = 5
+    private var bgTask: UIBackgroundTaskIdentifier = .invalid
+
+    private func beginBackgroundTask() {
+        endBackgroundTask()
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "WifiMicStream") { [weak self] in
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        if bgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+    }
 
     // MARK: - UserDefaults Keys
     private static let kLastHost = "wifimic_last_host"
@@ -124,6 +139,7 @@ public final class ConnectionManager: ObservableObject {
             guard let self = self else { return }
             self.isIntentionalDisconnect = true
             self.internalStreaming = false
+            self.endBackgroundTask()
             self.stopKeepalive()
             self.cancelReconnect()
 
@@ -149,6 +165,7 @@ public final class ConnectionManager: ObservableObject {
             guard let self = self else { return }
             guard self.connectionState.isConnectedOrStreaming else { return }
             self.internalStreaming = true
+            self.beginBackgroundTask()
             self.updateState(.streaming)
             DispatchQueue.main.async {
                 self.isStreaming = true
@@ -165,6 +182,7 @@ public final class ConnectionManager: ObservableObject {
         networkQueue.async { [weak self] in
             guard let self = self else { return }
             self.internalStreaming = false
+            self.endBackgroundTask()
             if self.connectionState == .streaming {
                 self.updateState(.connected)
             }
@@ -410,6 +428,16 @@ public final class ConnectionManager: ObservableObject {
         let sName = dict["serverName"] as? String ?? "Windows PC"
         let udpPort = (dict["udpPort"] as? NSNumber)?.uint16Value ?? 45456
 
+        // Synchronize session token with server if updated
+        if let tokenStr = dict["sessionToken"] as? String, let token = UUID(uuidString: tokenStr) {
+            self.currentToken = token
+            let u = token.uuid
+            self.sessionTokenBytes = [
+                u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
+                u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15
+            ]
+        }
+
         self.currentUdpPort = udpPort
         self.reconnectAttempt = 0
         self.lastPongTimestamp = Date()
@@ -427,8 +455,18 @@ public final class ConnectionManager: ObservableObject {
             startUdpChannel(host: host, port: udpPort)
         }
 
-        updateState(internalStreaming ? .streaming : .connected)
-        print("[TCP] Handshake successful! Server: \(sName), UDP port: \(udpPort)")
+        self.internalStreaming = true
+        self.beginBackgroundTask()
+        updateState(.streaming)
+        DispatchQueue.main.async {
+            self.isStreaming = true
+            do {
+                try self.audioStreamer?.start()
+            } catch {
+                print("[ConnectionManager] Failed to start audio streamer: \(error)")
+            }
+        }
+        print("[TCP] Handshake successful! Server: \(sName), UDP port: \(udpPort), auto-started streaming")
     }
 
     private func handleRejectedMessage(_ dict: [String: Any]) {

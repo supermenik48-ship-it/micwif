@@ -8,15 +8,17 @@ public final class AudioStreamer: ObservableObject {
     @Published public var audioLevel: Float = 0.0
     @Published public var gain: Float = 1.0 // 0.5 to 4.0
     @Published public private(set) var isRunning: Bool = false
-    @Published public private(set) var permissionDenied: Bool = false
+    @Published public var permissionDenied: Bool = false
 
     // MARK: - Weak ConnectionManager
     public weak var connectionManager: ConnectionManager?
 
     // MARK: - Audio Processing
     private let audioEngine = AVAudioEngine()
-    private var audioConverter: AVAudioConverter?
-    private let targetFormat: AVAudioFormat
+    private let playerNode = AVAudioPlayerNode()
+    private var isPlayerAttached = false
+    private var hasTapInstalled = false
+    private var silentBuffer: AVAudioPCMBuffer?
 
     private let audioQueue = DispatchQueue(label: "com.wifimic.audio", qos: .userInteractive)
     private var sampleAccumulator = [Int16]()
@@ -24,18 +26,8 @@ public final class AudioStreamer: ObservableObject {
     private var wasInterruptedWhileStreaming = false
 
     public init() {
-        // Target format: PCM 16-bit, 48000 Hz, mono
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: 48000,
-            channels: 1,
-            interleaved: true
-        ) else {
-            fatalError("Failed to initialize target AVAudioFormat")
-        }
-        self.targetFormat = format
-
         setupNotifications()
+        checkPermission()
     }
 
     deinit {
@@ -43,52 +35,84 @@ public final class AudioStreamer: ObservableObject {
         stop()
     }
 
-    // MARK: - Public Controls
-    public func start() throws {
-        audioQueue.sync {
-            guard !isRunning else { return }
-        }
-
-        // Check microphone permission
+    // MARK: - Permissions Helper
+    public func requestMicrophonePermission(completion: @escaping (Bool) -> Void) {
         let session = AVAudioSession.sharedInstance()
         switch session.recordPermission {
+        case .granted:
+            DispatchQueue.main.async {
+                self.permissionDenied = false
+                completion(true)
+            }
+        case .denied:
+            DispatchQueue.main.async {
+                self.permissionDenied = true
+                completion(false)
+            }
         case .undetermined:
-            session.requestRecordPermission { [weak self] granted in
+            session.requestRecordPermission { granted in
                 DispatchQueue.main.async {
-                    if granted {
+                    self.permissionDenied = !granted
+                    completion(granted)
+                }
+            }
+        @unknown default:
+            DispatchQueue.main.async {
+                completion(false)
+            }
+        }
+    }
+
+    public var isMicrophoneAuthorized: Bool {
+        return AVAudioSession.sharedInstance().recordPermission == .granted
+    }
+
+    public var isMicrophoneDenied: Bool {
+        return AVAudioSession.sharedInstance().recordPermission == .denied
+    }
+
+    public var isMicrophoneUndetermined: Bool {
+        return AVAudioSession.sharedInstance().recordPermission == .undetermined
+    }
+
+    public func checkPermission() {
+        let session = AVAudioSession.sharedInstance()
+        DispatchQueue.main.async {
+            self.permissionDenied = (session.recordPermission == .denied)
+        }
+    }
+
+    // MARK: - Public Controls
+    public func start() throws {
+        if !isMicrophoneAuthorized {
+            requestMicrophonePermission { [weak self] granted in
+                if granted {
+                    self?.audioQueue.async {
                         try? self?.startInternal()
-                    } else {
+                    }
+                } else {
+                    DispatchQueue.main.async {
                         self?.permissionDenied = true
                     }
                 }
             }
             return
-        case .denied:
-            DispatchQueue.main.async { self.permissionDenied = true }
-            throw NSError(
-                domain: "WifiMic.AudioStreamer",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Доступ к микрофону запрещён в настройках."]
-            )
-        case .granted:
-            break
-        @unknown default:
-            break
         }
 
-        try startInternal()
+        try audioQueue.sync {
+            try startInternal()
+        }
     }
 
     public func stop() {
         audioQueue.sync {
-            guard isRunning else { return }
             stopInternal()
         }
     }
 
     public func restart() {
         audioQueue.async { [weak self] in
-            guard let self = self, self.isRunning else { return }
+            guard let self = self else { return }
             self.stopInternal()
             try? self.startInternal()
         }
@@ -96,53 +120,73 @@ public final class AudioStreamer: ObservableObject {
 
     // MARK: - Internal Engine Management
     private func startInternal() throws {
+        // If already capturing and engine is actively running, no need to duplicate
+        if isRunning && audioEngine.isRunning && hasTapInstalled {
+            return
+        }
+
+        stopInternal()
+
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker, .mixWithOthers])
+        // playAndRecord + defaultToSpeaker + allowBluetooth + mixWithOthers for uninterrupted lock screen & background execution
+        try session.setCategory(
+            .playAndRecord,
+            mode: .default,
+            options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
+        )
         try session.setPreferredSampleRate(48000.0)
-        try session.setPreferredIOBufferDuration(0.01)
-        try session.setActive(true)
+        try session.setPreferredIOBufferDuration(0.01) // 10ms preferred buffer
+        try session.setActive(true, options: .notifyOthersOnDeactivation)
 
         let inputNode = audioEngine.inputNode
-        let hwFormat = inputNode.inputFormat(forBus: 0)
+        let busFormat = inputNode.outputFormat(forBus: 0)
+        let sampleRate = busFormat.sampleRate > 0 ? busFormat.sampleRate : 48000.0
+        let bufferSize = AVAudioFrameCount(max(512, Int(sampleRate * 0.02)))
 
-        guard hwFormat.sampleRate > 0 else {
-            throw NSError(
-                domain: "WifiMic.AudioStreamer",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Не удалось получить формат входного аудио."]
-            )
-        }
-
-        audioConverter = AVAudioConverter(from: hwFormat, to: targetFormat)
-
-        let bufferSize = AVAudioFrameCount(max(512, Int(hwFormat.sampleRate * 0.02)))
-
-        inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: hwFormat) { [weak self] buffer, _ in
+        // Pass format: nil so CoreAudio never throws NSInvalidArgumentException
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
             self?.processIncomingBuffer(buffer)
         }
+        hasTapInstalled = true
+
+        // Attach silent player node to keep the iOS audio graph active in background / lock screen
+        if !isPlayerAttached {
+            audioEngine.attach(playerNode)
+            isPlayerAttached = true
+        }
+        let mixer = audioEngine.mainMixerNode
+        audioEngine.connect(playerNode, to: mixer, format: nil)
+        mixer.outputVolume = 0.0 // Muted so no sound comes out of the device speaker
 
         audioEngine.prepare()
         try audioEngine.start()
+
+        // Schedule silent loop to maintain iOS background execution assertion
+        startSilentAudioLoop()
+
+        sampleAccumulator.removeAll(keepingCapacity: true)
 
         DispatchQueue.main.async {
             self.isRunning = true
             self.permissionDenied = false
         }
-        print("[AudioStreamer] Capture started (Rate: \(hwFormat.sampleRate)Hz, Channels: \(hwFormat.channelCount))")
+        print("[AudioStreamer] Capture started (Bus Rate: \(sampleRate)Hz, Channels: \(busFormat.channelCount))")
     }
 
     private func stopInternal() {
-        audioEngine.inputNode.removeTap(onBus: 0)
+        playerNode.stop()
+        if hasTapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            hasTapInstalled = false
+        }
         if audioEngine.isRunning {
             audioEngine.stop()
         }
         audioEngine.reset()
-        audioConverter = nil
+        isPlayerAttached = false
+        silentBuffer = nil
 
         sampleAccumulator.removeAll(keepingCapacity: true)
-
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 
         DispatchQueue.main.async {
             self.isRunning = false
@@ -153,6 +197,7 @@ public final class AudioStreamer: ObservableObject {
 
     private func pauseInternal() {
         audioEngine.pause()
+        playerNode.pause()
         DispatchQueue.main.async {
             self.isRunning = false
             self.audioLevel = 0.0
@@ -160,76 +205,156 @@ public final class AudioStreamer: ObservableObject {
     }
 
     private func resumeInternal() throws {
-        try AVAudioSession.sharedInstance().setActive(true)
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(
+            .playAndRecord,
+            mode: .default,
+            options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
+        )
+        try session.setActive(true, options: .notifyOthersOnDeactivation)
         try audioEngine.start()
+        playerNode.play()
         DispatchQueue.main.async {
             self.isRunning = true
         }
     }
 
-    // MARK: - Buffer Conversion & Chunking
+    // MARK: - Silent Audio Loop (Lock Screen / Background Keeper)
+    private func startSilentAudioLoop() {
+        let outputFormat = playerNode.outputFormat(forBus: 0)
+        guard outputFormat.sampleRate > 0 else { return }
+
+        let frameCount: AVAudioFrameCount = 4096
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: frameCount) else { return }
+        buffer.frameLength = frameCount
+
+        // Zero out channels for true digital silence
+        if let floatData = buffer.floatChannelData {
+            for ch in 0..<Int(outputFormat.channelCount) {
+                memset(floatData[ch], 0, Int(frameCount) * MemoryLayout<Float>.size)
+            }
+        }
+        self.silentBuffer = buffer
+
+        playerNode.play()
+        scheduleSilentLoop(buffer: buffer)
+    }
+
+    private func scheduleSilentLoop(buffer: AVAudioPCMBuffer) {
+        playerNode.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
+            self?.audioQueue.async {
+                guard let self = self, self.isRunning, self.playerNode.isPlaying else { return }
+                self.scheduleSilentLoop(buffer: buffer)
+            }
+        }
+    }
+
+    // MARK: - Buffer Conversion & Chunking (Float32/Int16 -> Int16 @ 48kHz)
     private func processIncomingBuffer(_ inputBuffer: AVAudioPCMBuffer) {
-        guard let converter = audioConverter else { return }
+        let frameCount = Int(inputBuffer.frameLength)
+        guard frameCount > 0 else { return }
 
-        // Calculate expected output frames for 48kHz
-        let ratio = 48000.0 / inputBuffer.format.sampleRate
-        let outputCapacity = AVAudioFrameCount(Double(inputBuffer.frameLength) * ratio + 128)
+        let sampleRate = inputBuffer.format.sampleRate
+        guard sampleRate > 0 else { return }
 
-        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else {
-            return
-        }
-
-        var hasSuppliedData = false
-        let status = converter.convert(to: outputBuffer, error: &error) { _, outStatus in
-            if hasSuppliedData {
-                outStatus.pointee = .noDataNow
-                return nil
-            }
-            hasSuppliedData = true
-            outStatus.pointee = .haveData
-            return inputBuffer
-        }
-
-        guard status != .error, error == nil, outputBuffer.frameLength > 0,
-              let channelData = outputBuffer.int16ChannelData else {
-            return
-        }
-
-        let frameCount = Int(outputBuffer.frameLength)
-        let rawSamples = channelData[0]
-
-        // Fetch current gain
         let currentGain = self.gain
-
-        // Apply gain, calculate VU meter peak, and collect samples
+        var convertedSamples = [Int16]()
         var peak: Float = 0.0
-        var convertedSamples = [Int16](repeating: 0, count: frameCount)
 
-        for i in 0..<frameCount {
-            let original = rawSamples[i]
-            let boosted = Float(original) * currentGain
-            let clamped = Int16(clamping: Int(boosted))
-            convertedSamples[i] = clamped
+        if let floatData = inputBuffer.floatChannelData {
+            let channel0 = floatData[0]
+            if abs(sampleRate - 48000.0) < 100.0 {
+                // Native 48kHz: direct conversion
+                convertedSamples.reserveCapacity(frameCount)
+                for i in 0..<frameCount {
+                    let f = channel0[i]
+                    let boosted = f * currentGain
+                    let clamped = Int16(clamping: Int(boosted * 32767.0))
+                    convertedSamples.append(clamped)
 
-            let normalized = abs(Float(clamped)) / 32768.0
-            if normalized > peak {
-                peak = normalized
+                    let absVal = abs(boosted)
+                    if absVal > peak { peak = absVal }
+                }
+            } else {
+                // Linear resampling to 48kHz
+                let ratio = 48000.0 / sampleRate
+                let targetCount = max(1, Int(Double(frameCount) * ratio))
+                convertedSamples.reserveCapacity(targetCount)
+
+                for i in 0..<targetCount {
+                    let srcIndex = Double(i) / ratio
+                    let index0 = min(Int(srcIndex), frameCount - 1)
+                    let index1 = min(index0 + 1, frameCount - 1)
+                    let frac = Float(srcIndex - Double(index0))
+
+                    let f = channel0[index0] * (1.0 - frac) + channel0[index1] * frac
+                    let boosted = f * currentGain
+                    let clamped = Int16(clamping: Int(boosted * 32767.0))
+                    convertedSamples.append(clamped)
+
+                    let absVal = abs(boosted)
+                    if absVal > peak { peak = absVal }
+                }
             }
+        } else if let int16Data = inputBuffer.int16ChannelData {
+            let channel0 = int16Data[0]
+            if abs(sampleRate - 48000.0) < 100.0 {
+                convertedSamples.reserveCapacity(frameCount)
+                for i in 0..<frameCount {
+                    let sample = Float(channel0[i]) / 32767.0
+                    let boosted = sample * currentGain
+                    let clamped = Int16(clamping: Int(boosted * 32767.0))
+                    convertedSamples.append(clamped)
+
+                    let absVal = abs(boosted)
+                    if absVal > peak { peak = absVal }
+                }
+            } else {
+                let ratio = 48000.0 / sampleRate
+                let targetCount = max(1, Int(Double(frameCount) * ratio))
+                convertedSamples.reserveCapacity(targetCount)
+
+                for i in 0..<targetCount {
+                    let srcIndex = Double(i) / ratio
+                    let index0 = min(Int(srcIndex), frameCount - 1)
+                    let index1 = min(index0 + 1, frameCount - 1)
+                    let frac = Float(srcIndex - Double(index0))
+
+                    let s0 = Float(channel0[index0]) / 32767.0
+                    let s1 = Float(channel0[index1]) / 32767.0
+                    let f = s0 * (1.0 - frac) + s1 * frac
+                    let boosted = f * currentGain
+                    let clamped = Int16(clamping: Int(boosted * 32767.0))
+                    convertedSamples.append(clamped)
+
+                    let absVal = abs(boosted)
+                    if absVal > peak { peak = absVal }
+                }
+            }
+        } else {
+            return
         }
 
-        // Update VU meter smoothly
-        let capturedPeak = peak
-        DispatchQueue.main.async {
-            let previous = self.audioLevel
-            // Instant attack, smooth exponential decay
-            let nextLevel = max(capturedPeak, previous * 0.7)
-            self.audioLevel = min(1.0, nextLevel)
+        // Update VU meter on UI only when app is visible (prevents dispatch queue buildup when screen is locked)
+        if UIApplication.shared.applicationState != .background {
+            let capturedPeak = min(1.0, peak)
+            DispatchQueue.main.async {
+                let previous = self.audioLevel
+                let nextLevel = max(capturedPeak, previous * 0.7)
+                self.audioLevel = min(1.0, nextLevel)
+            }
         }
 
         // Accumulate and slice into exact 10ms chunks (480 samples = 960 bytes)
         audioQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, self.isRunning else { return }
             self.sampleAccumulator.append(contentsOf: convertedSamples)
+
+            // Prevent buffer buildup if network was temporarily stalled (keep max 100ms)
+            if self.sampleAccumulator.count > self.targetSampleCount * 10 {
+                let excess = self.sampleAccumulator.count - (self.targetSampleCount * 5)
+                self.sampleAccumulator.removeFirst(excess)
+            }
 
             while self.sampleAccumulator.count >= self.targetSampleCount {
                 let chunkSamples = Array(self.sampleAccumulator.prefix(self.targetSampleCount))
@@ -264,16 +389,9 @@ public final class AudioStreamer: ObservableObject {
 
         center.addObserver(
             self,
-            selector: #selector(handleDidEnterBackground),
-            name: UIApplication.didEnterBackgroundNotification,
-            object: nil
-        )
-
-        center.addObserver(
-            self,
-            selector: #selector(handleWillEnterForeground),
-            name: UIApplication.willEnterForegroundNotification,
-            object: nil
+            selector: #selector(handleEngineConfigurationChange),
+            name: .AVAudioEngineConfigurationChange,
+            object: audioEngine
         )
     }
 
@@ -296,15 +414,7 @@ public final class AudioStreamer: ObservableObject {
             print("[AudioStreamer] Audio interruption ended")
             guard wasInterruptedWhileStreaming else { return }
             wasInterruptedWhileStreaming = false
-
-            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
-                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-                if options.contains(.shouldResume) {
-                    audioQueue.sync {
-                        try? resumeInternal()
-                    }
-                }
-            }
+            restart()
 
         @unknown default:
             break
@@ -324,14 +434,15 @@ public final class AudioStreamer: ObservableObject {
         }
     }
 
-    @objc private func handleDidEnterBackground() {
-        // Background audio: If not actively streaming, keep audio session deactivated
-        if !isRunning {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    @objc private func handleEngineConfigurationChange(notification: Notification) {
+        print("[AudioStreamer] Engine configuration changed (screen lock or route update)")
+        audioQueue.async { [weak self] in
+            guard let self = self, self.isRunning else { return }
+            if !self.audioEngine.isRunning {
+                print("[AudioStreamer] Audio engine was stopped, reviving capture")
+                self.stopInternal()
+                try? self.startInternal()
+            }
         }
-    }
-
-    @objc private func handleWillEnterForeground() {
-        // Nothing needed unless recovering from unexpected state
     }
 }
