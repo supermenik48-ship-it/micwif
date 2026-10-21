@@ -123,12 +123,9 @@ public final class AudioStreamer: ObservableObject {
         stopInternal()
 
         let session = AVAudioSession.sharedInstance()
-        // playAndRecord + voiceChat + defaultToSpeaker + allowBluetooth + mixWithOthers
-        // mode: .voiceChat explicitly tells iOS this is an active VoIP/mic communication app,
-        // keeping the microphone indicator ON and preventing background suspension!
         try session.setCategory(
             .playAndRecord,
-            mode: .voiceChat,
+            mode: .default,
             options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
         )
         try session.setPreferredSampleRate(48000.0)
@@ -140,8 +137,10 @@ public final class AudioStreamer: ObservableObject {
         let sampleRate = busFormat.sampleRate > 0 ? busFormat.sampleRate : 48000.0
         let bufferSize = AVAudioFrameCount(max(512, Int(sampleRate * 0.02)))
 
-        // Always remove any previous tap on bus 0 before installing to prevent NSInvalidArgumentException
-        inputNode.removeTap(onBus: 0)
+        if hasTapInstalled {
+            inputNode.removeTap(onBus: 0)
+            hasTapInstalled = false
+        }
 
         // Pass format: nil so CoreAudio never throws NSInvalidArgumentException
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
@@ -176,18 +175,15 @@ public final class AudioStreamer: ObservableObject {
 
     private func stopInternal() {
         playerNode.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        hasTapInstalled = false
+        if hasTapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            hasTapInstalled = false
+        }
 
         if audioEngine.isRunning {
             audioEngine.stop()
         }
         audioEngine.reset()
-
-        if playerNode.engine != nil {
-            audioEngine.detach(playerNode)
-        }
-        isPlayerAttached = false
         silentBuffer = nil
 
         sampleAccumulator.removeAll(keepingCapacity: true)
@@ -212,7 +208,7 @@ public final class AudioStreamer: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
             .playAndRecord,
-            mode: .voiceChat,
+            mode: .default,
             options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers]
         )
         try session.setActive(true, options: .notifyOthersOnDeactivation)
