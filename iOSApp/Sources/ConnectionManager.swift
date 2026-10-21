@@ -178,13 +178,7 @@ public final class ConnectionManager: ObservableObject {
     public func sendAudio(data: Data) {
         networkQueue.async { [weak self] in
             guard let self = self else { return }
-            guard self.internalStreaming, let udp = self.udpConnection else { return }
-            switch udp.state {
-            case .ready, .preparing:
-                break
-            default:
-                return
-            }
+            guard self.internalStreaming, let udp = self.udpConnection, udp.state == .ready else { return }
 
             // 26-byte Protocol v2 header:
             // [0-1]   Magic: 0x57 0x4D
@@ -229,6 +223,7 @@ public final class ConnectionManager: ObservableObject {
 
         let endpoint = NWEndpoint.Host(host)
         let tcpParams = NWParameters.tcp
+        tcpParams.allowLocalEndpointReuse = true
 
         let connection = NWConnection(host: endpoint, port: nwPort, using: tcpParams)
         self.tcpConnection = connection
@@ -432,17 +427,8 @@ public final class ConnectionManager: ObservableObject {
             startUdpChannel(host: host, port: udpPort)
         }
 
-        self.internalStreaming = true
-        updateState(.streaming)
-        DispatchQueue.main.async {
-            self.isStreaming = true
-            do {
-                try self.audioStreamer?.start()
-            } catch {
-                print("[ConnectionManager] Failed to start audio streamer: \(error)")
-            }
-        }
-        print("[TCP] Handshake successful! Server: \(sName), UDP port: \(udpPort), auto-started streaming")
+        updateState(internalStreaming ? .streaming : .connected)
+        print("[TCP] Handshake successful! Server: \(sName), UDP port: \(udpPort)")
     }
 
     private func handleRejectedMessage(_ dict: [String: Any]) {
@@ -480,6 +466,7 @@ public final class ConnectionManager: ObservableObject {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
         let endpoint = NWEndpoint.Host(host)
         let udpParams = NWParameters.udp
+        udpParams.allowLocalEndpointReuse = true
 
         let udp = NWConnection(host: endpoint, port: nwPort, using: udpParams)
         self.udpConnection = udp
