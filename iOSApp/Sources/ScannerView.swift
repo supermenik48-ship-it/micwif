@@ -109,7 +109,6 @@ public struct ScannerView: View {
         }
         .padding(.bottom, 32)
     }
-    }
 
     // MARK: - Permission Denied View
     private var permissionDeniedView: some View {
