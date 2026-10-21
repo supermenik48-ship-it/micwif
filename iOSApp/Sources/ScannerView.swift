@@ -1,6 +1,5 @@
 import SwiftUI
 import AVFoundation
-import UIKit
 
 public struct ScannerView: View {
     @Environment(\.dismiss) private var dismiss
@@ -9,9 +8,8 @@ public struct ScannerView: View {
     public var onManualEntryRequested: () -> Void
 
     @State private var isTorchOn: Bool = false
-    @State private var scanErrorMessage: String? = nil
-    @State private var isProcessingScan: Bool = false
     @State private var cameraPermission: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+    @State private var scanErrorMessage: String?
 
     public init(
         onScanSuccess: @escaping (String, UInt16, UUID) -> Void,
@@ -28,9 +26,9 @@ public struct ScannerView: View {
 
                 switch cameraPermission {
                 case .authorized:
-                    QRScannerContainer(
+                    QRCameraScannerContainer(
                         isTorchOn: isTorchOn,
-                        onCodeScanned: handleScannedString
+                        onDetectedCode: handleScannedString
                     )
                     .ignoresSafeArea()
 
@@ -42,7 +40,6 @@ public struct ScannerView: View {
                             .tint(.white)
                         Text("Запрос доступа к камере...")
                             .foregroundColor(.white)
-                            .font(.headline)
                     }
                     .onAppear {
                         requestCameraPermission()
@@ -65,8 +62,8 @@ public struct ScannerView: View {
                     .foregroundColor(.white)
                 }
 
-                ToolbarItem(placement: .primaryAction) {
-                    if cameraPermission == .authorized {
+                if cameraPermission == .authorized {
+                    ToolbarItem(placement: .primaryAction) {
                         Button {
                             isTorchOn.toggle()
                         } label: {
@@ -90,11 +87,12 @@ public struct ScannerView: View {
                     .stroke(Color.white.opacity(0.3), lineWidth: 2)
                     .frame(width: 260, height: 260)
 
+                // Corner accents
                 ScannerCornersView()
                     .frame(width: 260, height: 260)
             }
 
-            Text("Наведите камеру на QR-код в окне Wi-Fi Mic на компьютере")
+            Text("Наведите камеру на QR-код в приложении Wi-Fi Mic на компьютере")
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.white.opacity(0.85))
@@ -108,24 +106,9 @@ public struct ScannerView: View {
             }
 
             Spacer()
-
-            Button {
-                dismiss()
-                onManualEntryRequested()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "keyboard")
-                    Text("Ввести вручную")
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundColor(.white)
-                .padding(.vertical, 14)
-                .padding(.horizontal, 28)
-                .background(Color.white.opacity(0.2))
-                .clipShape(Capsule())
-            }
-            .padding(.bottom, 32)
         }
+        .padding(.bottom, 32)
+    }
     }
 
     // MARK: - Permission Denied View
@@ -176,15 +159,11 @@ public struct ScannerView: View {
     }
 
     private func handleScannedString(_ code: String) {
-        guard !isProcessingScan else { return }
         if let result = Self.parseQrPayload(code) {
-            isProcessingScan = true
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.success)
             dismiss()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                onScanSuccess(result.ip, result.port, result.token)
-            }
+            onScanSuccess(result.ip, result.port, result.token)
         } else {
             scanErrorMessage = "Неверный формат QR-кода"
         }
@@ -273,138 +252,86 @@ private struct ScannerCornersView: View {
                 path.addQuadCurve(to: CGPoint(x: 0, y: h - cornerRadius), control: CGPoint(x: 0, y: h))
                 path.addLine(to: CGPoint(x: 0, y: h - cornerLength))
             }
-            .stroke(Color.blue, style: StrokeStyle(lineWidth: cornerThickness, lineCap: .round))
+            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: cornerThickness, lineCap: .round))
         }
     }
 }
 
-// MARK: - Native AVCaptureSession QR Scanner
-private struct QRScannerContainer: UIViewControllerRepresentable {
+// MARK: - UIViewControllerRepresentable Camera
+private struct QRCameraScannerContainer: UIViewControllerRepresentable {
     var isTorchOn: Bool
-    var onCodeScanned: (String) -> Void
+    var onDetectedCode: (String) -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onCodeScanned: onCodeScanned)
+    func makeUIViewController(context: Context) -> QRCameraViewController {
+        let controller = QRCameraViewController()
+        controller.delegate = context.coordinator
+        return controller
     }
 
-    func makeUIViewController(context: Context) -> QRScannerViewController {
-        let vc = QRScannerViewController()
-        vc.coordinator = context.coordinator
-        context.coordinator.viewController = vc
-        return vc
-    }
-
-    func updateUIViewController(_ uiViewController: QRScannerViewController, context: Context) {
+    func updateUIViewController(_ uiViewController: QRCameraViewController, context: Context) {
         uiViewController.setTorch(on: isTorchOn)
     }
 
-    static func dismantleUIViewController(_ uiViewController: QRScannerViewController, coordinator: Coordinator) {
-        coordinator.stop()
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onDetectedCode: onDetectedCode)
     }
 
-    final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
-        var onCodeScanned: (String) -> Void
-        weak var viewController: QRScannerViewController?
-        var captureSession: AVCaptureSession?
+    class Coordinator: NSObject, QRCameraViewControllerDelegate {
+        var onDetectedCode: (String) -> Void
         private var hasScanned = false
-        private let sessionQueue = DispatchQueue(label: "com.wifimic.camera.queue")
 
-        init(onCodeScanned: @escaping (String) -> Void) {
-            self.onCodeScanned = onCodeScanned
+        init(onDetectedCode: @escaping (String) -> Void) {
+            self.onDetectedCode = onDetectedCode
         }
 
-        func setupSession() {
-            sessionQueue.async { [weak self] in
-                guard let self = self, !self.hasScanned else { return }
-
-                guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) ?? AVCaptureDevice.default(for: .video) else {
-                    print("[Camera] No video device found")
-                    return
-                }
-
-                guard let input = try? AVCaptureDeviceInput(device: device) else {
-                    print("[Camera] Failed to create device input")
-                    return
-                }
-
-                let session = AVCaptureSession()
-                session.beginConfiguration()
-
-                if session.canAddInput(input) {
-                    session.addInput(input)
-                } else {
-                    session.commitConfiguration()
-                    return
-                }
-
-                let output = AVCaptureMetadataOutput()
-                if session.canAddOutput(output) {
-                    session.addOutput(output)
-                } else {
-                    session.commitConfiguration()
-                    return
-                }
-
-                session.commitConfiguration()
-
-                output.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
-                if output.availableMetadataObjectTypes.contains(.qr) {
-                    output.metadataObjectTypes = [.qr]
-                }
-
-                self.captureSession = session
-
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self, let vc = self.viewController else { return }
-                    let previewLayer = AVCaptureVideoPreviewLayer(session: session)
-                    previewLayer.videoGravity = .resizeAspectFill
-                    previewLayer.frame = vc.view.bounds
-                    vc.view.layer.addSublayer(previewLayer)
-                    vc.previewLayer = previewLayer
-                }
-
-                session.startRunning()
-            }
-        }
-
-        func stop() {
-            sessionQueue.async { [weak self] in
-                guard let self = self else { return }
-                if let session = self.captureSession, session.isRunning {
-                    session.stopRunning()
-                }
-                self.captureSession = nil
-            }
-        }
-
-        // MARK: - AVCaptureMetadataOutputObjectsDelegate
-        func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        func didFindCode(_ code: String) {
             guard !hasScanned else { return }
-            guard let metadataObj = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
-                  metadataObj.type == .qr,
-                  let stringVal = metadataObj.stringValue,
-                  !stringVal.isEmpty else {
-                return
-            }
-
             hasScanned = true
-            stop()
-
             DispatchQueue.main.async {
-                self.onCodeScanned(stringVal)
+                self.onDetectedCode(code)
             }
         }
     }
 }
 
-private final class QRScannerViewController: UIViewController {
-    weak var coordinator: QRScannerContainer.Coordinator?
-    var previewLayer: AVCaptureVideoPreviewLayer?
+// MARK: - UIViewController Implementation
+private protocol QRCameraViewControllerDelegate: AnyObject {
+    func didFindCode(_ code: String)
+}
+
+private class QRCameraViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    weak var delegate: QRCameraViewControllerDelegate?
+
+    private let captureSession = AVCaptureSession()
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private let sessionQueue = DispatchQueue(label: "com.wifimic.camera.queue")
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        coordinator?.setupSession()
+
+        sessionQueue.async { [weak self] in
+            self?.setupCaptureSession()
+        }
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        sessionQueue.async { [weak self] in
+            if self?.captureSession.isRunning == false {
+                self?.captureSession.startRunning()
+            }
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        setTorch(on: false)
+        sessionQueue.async { [weak self] in
+            if self?.captureSession.isRunning == true {
+                self?.captureSession.stopRunning()
+            }
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -412,15 +339,74 @@ private final class QRScannerViewController: UIViewController {
         previewLayer?.frame = view.bounds
     }
 
+    private func setupCaptureSession() {
+        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+            print("[Camera] No wide angle camera available")
+            return
+        }
+
+        do {
+            let videoInput = try AVCaptureDeviceInput(device: videoDevice)
+            captureSession.beginConfiguration()
+
+            if captureSession.canAddInput(videoInput) {
+                captureSession.addInput(videoInput)
+            } else {
+                captureSession.commitConfiguration()
+                return
+            }
+
+            let metadataOutput = AVCaptureMetadataOutput()
+            if captureSession.canAddOutput(metadataOutput) {
+                captureSession.addOutput(metadataOutput)
+                metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
+                metadataOutput.metadataObjectTypes = [.qr]
+            }
+
+            captureSession.commitConfiguration()
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                let preview = AVCaptureVideoPreviewLayer(session: self.captureSession)
+                preview.videoGravity = .resizeAspectFill
+                preview.frame = self.view.bounds
+                self.view.layer.addSublayer(preview)
+                self.previewLayer = preview
+            }
+
+            sessionQueue.async { [weak self] in
+                self?.captureSession.startRunning()
+            }
+        } catch {
+            print("[Camera] Failed to initialize camera input: \(error)")
+        }
+    }
+
     func setTorch(on: Bool) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) ?? AVCaptureDevice.default(for: .video),
-                  device.hasTorch else { return }
+        sessionQueue.async {
+            guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+                  device.hasTorch else {
+                return
+            }
             do {
                 try device.lockForConfiguration()
                 device.torchMode = on ? .on : .off
                 device.unlockForConfiguration()
-            } catch {}
+            } catch {
+                print("[Camera] Torch error: \(error)")
+            }
         }
+    }
+
+    // MARK: - AVCaptureMetadataOutputObjectsDelegate
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+              metadataObject.type == .qr,
+              let stringValue = metadataObject.stringValue else {
+            return
+        }
+
+        captureSession.stopRunning()
+        delegate?.didFindCode(stringValue)
     }
 }

@@ -13,85 +13,52 @@ public struct ContentView: View {
     public init() {}
 
     public var body: some View {
-        NavigationStack {
-            ZStack {
-                Color(uiColor: .systemGroupedBackground)
-                    .ignoresSafeArea()
+        ZStack {
+            Color(uiColor: .systemGroupedBackground)
+                .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    // Top Status Bar
-                    statusBarHeader
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(Color(uiColor: .secondarySystemGroupedBackground))
+            VStack(spacing: 0) {
+                // Minimalist Top Status
+                statusBarHeader
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 6)
 
-                    Divider()
+                // Main Content
+                ScrollView {
+                    VStack(spacing: 20) {
+                        switch connectionManager.connectionState {
+                        case .disconnected:
+                            disconnectedSection
 
-                    // Main Content
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            switch connectionManager.connectionState {
-                            case .disconnected:
-                                disconnectedSection
+                        case .connecting:
+                            connectingSection(title: "Подключение к серверу...")
 
-                            case .connecting:
-                                connectingSection(title: "Подключение к серверу...")
+                        case .reconnecting(let attempt):
+                            connectingSection(title: "Переподключение (попытка \(attempt)/5)...")
 
-                            case .reconnecting(let attempt):
-                                connectingSection(title: "Переподключение (попытка \(attempt)/5)...")
+                        case .connected, .streaming:
+                            connectedSection
 
-                            case .connected, .streaming:
-                                connectedSection
-
-                            case .error(let errorMsg):
-                                errorSection(message: errorMsg)
-                            }
+                        case .error(let errorMsg):
+                            errorSection(message: errorMsg)
                         }
-                        .padding(16)
                     }
+                    .padding(16)
                 }
             }
-            .navigationTitle("Wi-Fi Mic")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingHelp = true
-                    } label: {
-                        Image(systemName: "questionmark.circle")
-                    }
-                }
-            }
-            .sheet(isPresented: $showingScanner) {
-                ScannerView { host, port, token in
-                    connectToServer(host: host, port: port, token: token)
-                } onManualEntryRequested: {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        showingManualEntry = true
-                    }
-                }
-            }
-            .sheet(isPresented: $showingManualEntry) {
-                ManualEntryView(
-                    initialIp: lastConnection?.host ?? "",
-                    initialPort: lastConnection?.port ?? 45455,
-                    initialToken: lastConnection?.token.uuidString ?? ""
-                ) { host, port, token in
-                    connectToServer(host: host, port: port, token: token)
-                }
-            }
-            .sheet(isPresented: $showingHelp) {
-                OnboardingView {
-                    showingHelp = false
-                }
-            }
-            .onAppear {
-                setupBinding()
-                refreshLastConnection()
-            }
-            .onChange(of: connectionManager.connectionState) { _ in
-                refreshLastConnection()
-            }
+        }
+        .sheet(isPresented: $showingScanner) {
+            ScannerView { host, port, token in
+                connectToServer(host: host, port: port, token: token)
+            } onManualEntryRequested: {}
+        }
+        .onAppear {
+            setupBinding()
+            refreshLastConnection()
+        }
+        .onChange(of: connectionManager.connectionState) { _ in
+            refreshLastConnection()
         }
     }
 
@@ -110,19 +77,16 @@ public struct ContentView: View {
         refreshLastConnection()
     }
 
-    // MARK: - Top Status Bar Header
+    // MARK: - Top Minimalist Status
     private var statusBarHeader: some View {
-        HStack {
-            // Status Indicator Dot & Label
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(statusIndicatorColor)
-                    .frame(width: 10, height: 10)
+        HStack(spacing: 8) {
+            Circle()
+                .fill(statusIndicatorColor)
+                .frame(width: 8, height: 8)
 
-                Text(connectionManager.connectionState.statusDescription)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(.primary)
-            }
+            Text(connectionManager.connectionState.statusDescription)
+                .font(.footnote.weight(.medium))
+                .foregroundColor(.secondary)
 
             Spacer()
 
@@ -132,11 +96,11 @@ public struct ContentView: View {
                     Image(systemName: "gauge.with.needle")
                         .font(.caption2)
                     Text(String(format: "%.0f мс", connectionManager.latencyMs))
-                        .font(.caption.weight(.semibold))
+                        .font(.caption2.weight(.semibold))
                 }
                 .foregroundColor(latencyColor)
                 .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.vertical, 3)
                 .background(latencyColor.opacity(0.12))
                 .clipShape(Capsule())
             }
@@ -206,22 +170,6 @@ public struct ContentView: View {
             .padding(20)
             .background(Color(uiColor: .secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            // Secondary: Manual Entry
-            Button {
-                showingManualEntry = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "keyboard")
-                    Text("Ввести параметры вручную")
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundColor(.blue)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(Color(uiColor: .secondarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
 
             // Quick Reconnect Section
             if let last = lastConnection {
