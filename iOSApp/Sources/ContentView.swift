@@ -13,41 +13,40 @@ public struct ContentView: View {
     public init() {}
 
     public var body: some View {
-        ZStack {
-            Color(uiColor: .systemGroupedBackground)
-                .ignoresSafeArea()
+        VStack(spacing: 0) {
+            // Minimalist Top Status Header
+            statusBarHeader
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 6)
 
-            VStack(spacing: 0) {
-                // Minimalist Top Status
-                statusBarHeader
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
-                    .padding(.bottom, 6)
+            // Main Content
+            ScrollView {
+                VStack(spacing: 16) {
+                    switch connectionManager.connectionState {
+                    case .disconnected:
+                        disconnectedSection
 
-                // Main Content
-                ScrollView {
-                    VStack(spacing: 20) {
-                        switch connectionManager.connectionState {
-                        case .disconnected:
-                            disconnectedSection
+                    case .connecting:
+                        connectingSection(title: "Подключение к серверу...")
 
-                        case .connecting:
-                            connectingSection(title: "Подключение к серверу...")
+                    case .reconnecting(let attempt):
+                        connectingSection(title: "Переподключение (попытка \(attempt)/5)...")
 
-                        case .reconnecting(let attempt):
-                            connectingSection(title: "Переподключение (попытка \(attempt)/5)...")
+                    case .connected, .streaming:
+                        connectedSection
 
-                        case .connected, .streaming:
-                            connectedSection
-
-                        case .error(let errorMsg):
-                            errorSection(message: errorMsg)
-                        }
+                    case .error(let errorMsg):
+                        errorSection(message: errorMsg)
                     }
-                    .padding(16)
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 2)
+                .padding(.bottom, 24)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
         .sheet(isPresented: $showingScanner) {
             ScannerView { host, port, token in
                 connectToServer(host: host, port: port, token: token)
